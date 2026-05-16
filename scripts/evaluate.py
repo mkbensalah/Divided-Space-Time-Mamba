@@ -1,0 +1,128 @@
+"""Evaluation of a fine-tuned DST-Mamba checkpoint on the CHU-SJ test split.
+
+Reports mAP at multiple IoU thresholds, mAP50-95, rotated IoU, angle accuracy,
+and temporal IoU.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import torch
+import yaml
+from torch.utils.data import DataLoader
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from data import CHUSJVideoDataset, collate_fn, default_eval_transforms
+from utils import csl_decode, rotated_iou_matrix, angle_accuracy, mean_average_precision
+from scripts.finetune import Detector
+
+
+@torch.no_grad()
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--data_root", required=True)
+    p.add_argument("--split", default="test")
+    p.add_argument("--score_threshold", type=float, default=0.3)
+    p.add_argument("--batch_size", type=int, default=16)
+    args = p.parse_args()
+
+    ckpt = torch.load(args.checkpoint, map_location="cpu")
+    cfg = ckpt["config"]
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    model = Detector(cfg).to(device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+
+    ds = CHUSJVideoDataset(
+        root=args.data_root, split=args.split, train=False,
+        num_frames=cfg["data"]["num_frames"], img_size=cfg["data"]["img_size"],
+        temporal_stride=cfg["data"]["temporal_stride"],
+        clips_per_patient=cfg["data"]["clips_per_patient"],
+        use_depth=cfg["data"]["use_depth"],
+        transforms=default_eval_transforms(),
+    )
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
+                        num_workers=4, collate_fn=collate_fn)
+
+    preds_all, gts_all = [], []
+    pred_angles, gt_angles = [], []
+    pred_obbs_pos, gt_obbs_pos = [], []
+
+    num_classes = cfg["head"]["num_classes"]
+
+    for batch in loader:
+        clip = batch["clip"].to(device, non_blocking=True)
+        out = model(clip)
+        prob = torch.sigmoid(out["cls"]).cpu()
+        bbox = out["bbox"].cpu()
+        theta = csl_decode(out["angle"]).cpu()
+
+        B = prob.shape[0]
+        for b in range(B):
+            present = prob[b] > args.score_threshold
+            keep_b, keep_s, keep_l = [], [], []
+            for c in range(num_classes):
+                if not present[c]:
+                    continue
+                x, y, w, h = bbox[b, c]
+                keep_b.append(torch.tensor([x, y, w, h, theta[b, c]]))
+                keep_s.append(prob[b, c])
+                keep_l.append(c)
+            preds_all.append({
+                "boxes":  torch.stack(keep_b) if keep_b else torch.zeros(0, 5),
+                "scores": torch.stack(keep_s) if keep_s else torch.zeros(0),
+                "labels": torch.tensor(keep_l) if keep_l else torch.zeros(0, dtype=torch.long),
+            })
+
+            g_cls = batch["target"]["cls"][b]
+            g_bbox = batch["target"]["bbox"][b]
+            g_angle = batch["target"]["angle"][b]
+            g_b, g_l = [], []
+            for c in range(num_classes):
+                if g_cls[c] > 0.5:
+                    g_b.append(torch.cat([g_bbox[c], g_angle[c:c + 1]]))
+                    g_l.append(c)
+                    if present[c]:
+                        pred_obbs_pos.append(torch.tensor(
+                            [bbox[b, c, 0], bbox[b, c, 1], bbox[b, c, 2], bbox[b, c, 3], theta[b, c]]
+                        ))
+                        gt_obbs_pos.append(torch.cat([g_bbox[c], g_angle[c:c + 1]]))
+                        pred_angles.append(theta[b, c])
+                        gt_angles.append(g_angle[c])
+            gts_all.append({
+                "boxes":  torch.stack(g_b) if g_b else torch.zeros(0, 5),
+                "labels": torch.tensor(g_l) if g_l else torch.zeros(0, dtype=torch.long),
+            })
+
+    thrs = tuple(cfg["eval"]["iou_thresholds"])
+    metrics = mean_average_precision(preds_all, gts_all, num_classes, iou_thrs=thrs)
+
+    if pred_obbs_pos:
+        p_obb = torch.stack(pred_obbs_pos)
+        g_obb = torch.stack(gt_obbs_pos)
+        # Pairwise diagonal: each pred matched to its same-index gt.
+        from losses.rotated_iou import rotated_iou_shapely
+        riou = rotated_iou_shapely(p_obb, g_obb).mean().item()
+        ang_acc = angle_accuracy(torch.stack(pred_angles), torch.stack(gt_angles))
+    else:
+        riou, ang_acc = 0.0, 0.0
+
+    print("=" * 60)
+    print(f"Checkpoint: {args.checkpoint}")
+    print(f"Split: {args.split} | {len(ds)} clips")
+    print("-" * 60)
+    for k, v in metrics.items():
+        print(f"  {k:>14s}: {v:.4f}")
+    print(f"  {'rIoU':>14s}: {riou:.4f}")
+    print(f"  {'Angle acc':>14s}: {ang_acc:.4f}")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

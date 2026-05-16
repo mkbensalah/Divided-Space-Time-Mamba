@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the following paper."
+title: "Divided Space-Time Mamba (DST-Mamba)"
+authors:
+  - family-names: "Ben Salah"
+    given-names: "Mohamed Khalil"
+    affiliation: "École de Technologie Supérieure, University of Quebec"
+  - family-names: "Jouvet"
+    given-names: "Philippe"
+    affiliation: "CHU Sainte-Justine"
+  - family-names: "Noumeir"
+    given-names: "Rita"
+    affiliation: "École de Technologie Supérieure, University of Quebec"
+preferred-citation:
+  type: article
+  title: "PICU Face and Thoracoabdominal Detection Using Self-Supervised Divided Space-Time Mamba"
+  authors:
+    - family-names: "Ben Salah"
+      given-names: "Mohamed Khalil"
+    - family-names: "Jouvet"
+      given-names: "Philippe"
+    - family-names: "Noumeir"
+      given-names: "Rita"
+  journal: "Life"
+  volume: 15
+  issue: 11
+  start: 1706
+  year: 2025
+  doi: "10.3390/life15111706"

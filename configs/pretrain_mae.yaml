@@ -1,0 +1,45 @@
+# MAE self-supervised pretraining for DST-Mamba (paper defaults).
+
+model:
+  img_size: 224
+  patch_size: 16
+  num_frames: 16
+  tubelet_size: 1
+  in_chans: 3                # set 4 for RGB-D pretraining
+  embed_dim: 768
+  depth: 12
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  mlp_ratio: 4.0
+
+mae:
+  decoder_dim: 384
+  decoder_depth: 4
+  norm_target: true
+  mask_ratio: 0.80
+
+data:
+  num_frames: 16
+  img_size: 224
+  temporal_stride: 4
+  use_depth: false
+
+optim:
+  optimizer: adamw
+  lr: 1.5e-4                 # scaled by batch_size / 256
+  weight_decay: 0.05
+  betas: [0.9, 0.95]
+  warmup_epochs: 40
+  epochs: 2500
+  schedule: cosine
+
+train:
+  batch_size: 32
+  accum_steps: 1
+  num_workers: 8
+  grad_clip: 1.0
+  amp: true
+  log_interval: 50
+  save_interval_epochs: 50
+  seed: 0

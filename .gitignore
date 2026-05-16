@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project artifacts
+runs/
+checkpoints/
+logs/
+wandb/
+tb_logs/
+*.pth
+*.pt
+*.ckpt
+figures/
+
+# Data (keep out of repo)
+data/chusj/
+data/synthetic_clips/
+data/raw/
+*.mp4
+*.avi
+*.mov
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Notebooks
+.ipynb_checkpoints/

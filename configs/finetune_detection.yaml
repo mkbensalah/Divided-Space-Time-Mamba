@@ -1,0 +1,54 @@
+# Detection fine-tuning for DST-Mamba on CHU-SJ PICU (paper defaults).
+
+model:
+  img_size: 224              # set 640 for high-res experiments
+  patch_size: 16
+  num_frames: 16
+  tubelet_size: 1
+  in_chans: 3                # set 4 for RGB-D
+  embed_dim: 768
+  depth: 12
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  mlp_ratio: 4.0
+
+head:
+  num_classes: 2
+  num_angle_bins: 180
+  hidden_dim: 256
+
+data:
+  num_frames: 16
+  img_size: 224
+  temporal_stride: 4
+  clips_per_patient: 16
+  use_depth: false
+
+loss:
+  alpha: 1.0                 # weight on L1 bbox
+  beta: 2.0                  # weight on rotated IoU
+  csl_radius: 6
+
+optim:
+  optimizer: radam
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  epochs: 100
+  warmup_epochs: 5
+  schedule: cosine
+  layer_wise_lr_decay: 0.85  # backbone layers decay; head full lr
+
+train:
+  batch_size: 32
+  accum_steps: 1
+  num_workers: 8
+  grad_clip: 1.0
+  amp: true
+  log_interval: 20
+  save_best_metric: mAP@0.50
+  seed: 0
+
+eval:
+  iou_thresholds: [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+  score_threshold: 0.3
