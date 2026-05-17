@@ -1,0 +1,43 @@
+{
+    "video_id": "video_001",
+    "file":     "videos/video_001.mp4",
+    "fps": 25,
+    "height": 720,
+    "width":  1280,
+    "frames": [
+        {
+            "index": 0,
+            "objects": [
+                {
+                    "class":     "face",
+                    "xc":        320.5,
+                    "yc":        180.3,
+                    "w":          80.0,
+                    "h":          95.0,
+                    "theta_deg":   5.0
+                },
+                {
+                    "class":     "thorax",
+                    "xc":        330.0,
+                    "yc":        360.0,
+                    "w":         200.0,
+                    "h":         160.0,
+                    "theta_deg": 10.0
+                }
+            ]
+        },
+        {
+            "index": 1,
+            "objects": [
+                {
+                    "class":     "face",
+                    "xc":        322.0,
+                    "yc":        181.5,
+                    "w":          80.5,
+                    "h":          95.2,
+                    "theta_deg":   4.8
+                }
+            ]
+        }
+    ]
+}

@@ -15,6 +15,7 @@ import torch
 from torch.utils.data import Dataset
 
 from .chusj_dataset import _load_video_frames, _load_depth_frames
+from .transforms import default_pretrain_transforms
 
 
 class PretrainClipDataset(Dataset):
@@ -26,12 +27,15 @@ class PretrainClipDataset(Dataset):
         temporal_stride: int = 4,
         use_depth: bool = False,
         depth_suffix: str = "_depth",
+        transforms=None,
     ):
         self.num_frames = num_frames
         self.img_size = img_size
         self.temporal_stride = temporal_stride
         self.use_depth = use_depth
         self.depth_suffix = depth_suffix
+        # Default to ImageNet normalization so pretrain and finetune inputs match.
+        self.transforms = transforms if transforms is not None else default_pretrain_transforms()
 
         self.videos: List[str] = []
         for d in video_dirs:
@@ -51,7 +55,9 @@ class PretrainClipDataset(Dataset):
         span = self.temporal_stride * (self.num_frames - 1) + 1
         max_start = max(0, total - span)
         start = np.random.randint(0, max_start + 1) if max_start > 0 else 0
-        return [start + i * self.temporal_stride for i in range(self.num_frames)]
+        indices = [start + i * self.temporal_stride for i in range(self.num_frames)]
+        # Clamp to [0, total-1] so videos shorter than the full span don't OOB.
+        return [min(i, total - 1) for i in indices]
 
     def __getitem__(self, idx):
         path = self.videos[idx]
@@ -78,6 +84,10 @@ class PretrainClipDataset(Dataset):
             clip = rgb
 
         clip = clip.permute(1, 0, 2, 3).contiguous()                  # (C, T, H, W)
+
+        if self.transforms is not None:
+            clip, _ = self.transforms(clip, None)
+
         return {"clip": clip}
 
 

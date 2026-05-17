@@ -1,10 +1,16 @@
-"""Fine-tune DST-Mamba for face + thoracoabdominal OBB detection on CHU-SJ.
+"""Fine-tune DST-Mamba for oriented bounding box detection.
+
+Works with any dataset that follows the VideoOBBDataset layout:
+    root/
+        annotations/{video_id}.json
+        splits/{train,val,test}.txt
+        videos/{video_id}.mp4
 
 Usage:
     python scripts/finetune.py \
         --config configs/finetune_detection.yaml \
         --pretrained runs/pretrain/checkpoint-last.pth \
-        --data_root data/chusj \
+        --data_root data/my_dataset \
         --output_dir runs/finetune
 """
 
@@ -17,6 +23,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import yaml
@@ -26,7 +33,7 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from data import (
-    CHUSJVideoDataset, collate_fn,
+    VideoOBBDataset, collate_fn,
     default_train_transforms, default_eval_transforms,
 )
 from losses import DetectionLoss
@@ -41,9 +48,11 @@ class Detector(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.backbone = DSTMamba(**cfg["model"], cls_token=False)
+        # num_classes is derived from class_names so config stays consistent.
+        num_classes = len(cfg["data"].get("class_names", ["face", "thorax"]))
         self.head = OBBDetectionHead(
             embed_dim=cfg["model"]["embed_dim"],
-            num_classes=cfg["head"]["num_classes"],
+            num_classes=num_classes,
             num_angle_bins=cfg["head"]["num_angle_bins"],
             hidden_dim=cfg["head"]["hidden_dim"],
         )
@@ -73,6 +82,51 @@ def cosine_with_warmup(step, total, warmup, base_lr, min_lr=1e-6):
         return base_lr * (step + 1) / max(warmup, 1)
     progress = (step - warmup) / max(total - warmup, 1)
     return min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
+
+
+def build_optimizer(model: Detector, cfg: dict):
+    """RAdam with layer-wise LR decay (0.85 per layer) on the backbone.
+
+    Schedule (from deepest to shallowest):
+        patch_embed / pos_embed / norm:  base_lr * decay^num_layers
+        blocks[i]:                       base_lr * decay^(num_layers - i)
+        detection head:                  base_lr  (no decay)
+
+    The '_base_lr' key stored in each param group is used by the training loop
+    to apply the cosine schedule proportionally across all groups.
+    """
+    base_lr = cfg["optim"]["lr"]
+    wd = cfg["optim"]["weight_decay"]
+    decay = cfg["optim"].get("layer_wise_lr_decay", 1.0)
+    num_layers = len(model.backbone.blocks)
+
+    try:
+        from torch.optim import RAdam
+    except ImportError:
+        from timm.optim import RAdam
+
+    param_groups = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        if "backbone.blocks." in name:
+            layer_idx = int(name.split("backbone.blocks.")[1].split(".")[0])
+            # Block 0 (earliest) gets the most decay; block num_layers-1 gets decay^1.
+            group_lr = base_lr * (decay ** (num_layers - layer_idx))
+        elif "backbone." in name:
+            # patch_embed, positional embeddings, final norm: treat as layer 0.
+            group_lr = base_lr * (decay ** num_layers)
+        else:
+            # Detection head: full learning rate, no decay.
+            group_lr = base_lr
+
+        # No weight decay on 1-D params (norms, biases).
+        this_wd = 0.0 if (param.ndim == 1 or "norm" in name or "bias" in name) else wd
+        param_groups.append({"params": [param], "lr": group_lr,
+                             "weight_decay": this_wd, "_base_lr": group_lr})
+
+    return RAdam(param_groups)
 
 
 # --------------------------------------------------------------------- #
@@ -153,23 +207,29 @@ def main():
     writer = SummaryWriter(out / "tb")
 
     torch.manual_seed(cfg["train"]["seed"])
+    np.random.seed(cfg["train"]["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Datasets
-    train_ds = CHUSJVideoDataset(
+    class_names = cfg["data"].get("class_names", ["face", "thorax"])
+    clips_per_video = cfg["data"].get("clips_per_video", cfg["data"].get("clips_per_patient", 16))
+
+    # Datasets — VideoOBBDataset works with any annotated video collection.
+    train_ds = VideoOBBDataset(
         root=args.data_root, split="train", train=True,
+        class_names=class_names,
         num_frames=cfg["data"]["num_frames"], img_size=cfg["data"]["img_size"],
         temporal_stride=cfg["data"]["temporal_stride"],
-        clips_per_patient=cfg["data"]["clips_per_patient"],
+        clips_per_video=clips_per_video,
         use_depth=cfg["data"]["use_depth"],
         transforms=default_train_transforms(),
     )
-    val_split = "val" if (Path(args.data_root) / "splits" / "val_patients.txt").exists() else "test"
-    val_ds = CHUSJVideoDataset(
+    val_split = "val" if (Path(args.data_root) / "splits" / "val.txt").exists() else "test"
+    val_ds = VideoOBBDataset(
         root=args.data_root, split=val_split, train=False,
+        class_names=class_names,
         num_frames=cfg["data"]["num_frames"], img_size=cfg["data"]["img_size"],
         temporal_stride=cfg["data"]["temporal_stride"],
-        clips_per_patient=cfg["data"]["clips_per_patient"],
+        clips_per_video=clips_per_video,
         use_depth=cfg["data"]["use_depth"],
         transforms=default_eval_transforms(),
     )
@@ -189,23 +249,15 @@ def main():
 
     # Loss
     criterion = DetectionLoss(
-        num_classes=cfg["head"]["num_classes"],
+        num_classes=len(class_names),
         num_angle_bins=cfg["head"]["num_angle_bins"],
         alpha=cfg["loss"]["alpha"],
         beta=cfg["loss"]["beta"],
         csl_radius=cfg["loss"]["csl_radius"],
     )
 
-    # Optimizer (RAdam per paper)
-    try:
-        from torch.optim import RAdam
-    except ImportError:
-        from timm.optim import RAdam
-    optim = RAdam(
-        model.parameters(),
-        lr=cfg["optim"]["lr"],
-        weight_decay=cfg["optim"]["weight_decay"],
-    )
+    # Optimizer: RAdam with layer-wise LR decay (paper: 0.85 per backbone layer).
+    optim = build_optimizer(model, cfg)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"]["amp"])
 
     steps_per_epoch = len(train_loader) // cfg["train"]["accum_steps"]
@@ -224,9 +276,12 @@ def main():
             clip = batch["clip"].to(device, non_blocking=True)
             tgt = {k: v.to(device, non_blocking=True) for k, v in batch["target"].items()}
 
+            # Compute the schedule factor relative to base_lr so each param group
+            # stays at its layer-decayed ratio throughout warmup and cosine decay.
             lr = cosine_with_warmup(global_step, total_steps, warmup_steps, cfg["optim"]["lr"])
+            factor = lr / cfg["optim"]["lr"]
             for g in optim.param_groups:
-                g["lr"] = lr
+                g["lr"] = g["_base_lr"] * factor
 
             with torch.cuda.amp.autocast(enabled=cfg["train"]["amp"]):
                 preds = model(clip)

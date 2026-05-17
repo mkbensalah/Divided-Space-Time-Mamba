@@ -1,6 +1,15 @@
 # Divided Space–Time Mamba (DST-Mamba)
 
-Official implementation of **"PICU Face and Thoracoabdominal Detection Using Self-Supervised Divided Space–Time Mamba"** ([*Life*, 2025, 15, 1706](https://doi.org/10.3390/life15111706)).
+[![Paper](https://img.shields.io/badge/Paper-Life%202025-blue)](https://doi.org/10.3390/life15111706)
+[![arXiv](https://img.shields.io/badge/DOI-10.3390%2Flife15111706-red)](https://doi.org/10.3390/life15111706)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Official implementation** of:
+
+> Mohamed Khalil Ben Salah, Philippe Jouvet, Rita Noumeir.
+> **"PICU Face and Thoracoabdominal Detection Using Self-Supervised Divided Space–Time Mamba."**
+> *Life*, 15(11), 1706, 2025.
+> [https://doi.org/10.3390/life15111706](https://doi.org/10.3390/life15111706)
 
 DST-Mamba is a State Space Model–based detector for face and thoracoabdominal regions in pediatric intensive care unit (PICU) video. It factorizes spatiotemporal modeling into a spatial Bi-Mamba stage followed by a temporal Bi-Mamba stage, predicts oriented bounding boxes (OBBs), and is pretrained with masked autoencoders on domain-specific clips. The model achieves 0.96 mAP@0.5 / 0.62 mAP50-95 / 0.95 rotated IoU at 23 FPS (43 ms latency) on 16×640² clips.
 

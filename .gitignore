@@ -41,6 +41,9 @@ data/raw/
 *.avi
 *.mov
 
+# Claude Code session memory (local only)
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

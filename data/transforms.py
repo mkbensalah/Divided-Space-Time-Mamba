@@ -22,7 +22,7 @@ class Compose:
     def __init__(self, transforms: List):
         self.transforms = transforms
 
-    def __call__(self, clip, target):
+    def __call__(self, clip, target=None):
         for t in self.transforms:
             clip, target = t(clip, target)
         return clip, target
@@ -32,12 +32,13 @@ class RandomHorizontalFlip:
     def __init__(self, p: float = 0.5):
         self.p = p
 
-    def __call__(self, clip, target):
+    def __call__(self, clip, target=None):
         if random.random() < self.p:
             clip = torch.flip(clip, dims=[-1])
-            # xc -> 1 - xc; theta -> pi - theta (mod pi)
-            target["bbox"][:, 0] = 1.0 - target["bbox"][:, 0]
-            target["angle"] = (math.pi - target["angle"]) % math.pi
+            if target is not None:
+                # xc -> 1 - xc; theta -> pi - theta (mod pi)
+                target["bbox"][:, 0] = 1.0 - target["bbox"][:, 0]
+                target["angle"] = (math.pi - target["angle"]) % math.pi
         return clip, target
 
 
@@ -47,7 +48,7 @@ class ColorJitter:
         self.brightness = brightness
         self.contrast = contrast
 
-    def __call__(self, clip, target):
+    def __call__(self, clip, target=None):
         b = 1.0 + random.uniform(-self.brightness, self.brightness)
         c = 1.0 + random.uniform(-self.contrast, self.contrast)
         # Only modify RGB channels (first 3) if depth present.
@@ -62,7 +63,7 @@ class Normalize:
     MEAN = [0.485, 0.456, 0.406]
     STD = [0.229, 0.224, 0.225]
 
-    def __call__(self, clip, target):
+    def __call__(self, clip, target=None):
         for i in range(3):
             clip[i] = (clip[i] - self.MEAN[i]) / self.STD[i]
         return clip, target
@@ -78,3 +79,17 @@ def default_train_transforms():
 
 def default_eval_transforms():
     return Compose([Normalize()])
+
+
+def default_pretrain_transforms():
+    """Transforms for MAE pretraining clips (no OBB target).
+
+    Applies the same ImageNet normalization as fine-tuning so the pretrained
+    encoder and the fine-tuning stage see identical input statistics.
+    Color jitter and flip are included as in VideoMAE pretraining.
+    """
+    return Compose([
+        RandomHorizontalFlip(p=0.5),
+        ColorJitter(brightness=0.4, contrast=0.4),
+        Normalize(),
+    ])

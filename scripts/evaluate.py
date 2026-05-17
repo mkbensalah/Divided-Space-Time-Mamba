@@ -1,4 +1,4 @@
-"""Evaluation of a fine-tuned DST-Mamba checkpoint on the CHU-SJ test split.
+"""Evaluate a fine-tuned DST-Mamba checkpoint on any VideoOBBDataset split.
 
 Reports mAP at multiple IoU thresholds, mAP50-95, rotated IoU, angle accuracy,
 and temporal IoU.
@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 from torch.utils.data import DataLoader
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from data import CHUSJVideoDataset, collate_fn, default_eval_transforms
-from utils import csl_decode, rotated_iou_matrix, angle_accuracy, mean_average_precision
+from data import VideoOBBDataset, collate_fn, default_eval_transforms
+from utils import csl_decode, rotated_iou_matrix, angle_accuracy, mean_average_precision, temporal_iou
 from scripts.finetune import Detector
 
 
@@ -39,11 +41,14 @@ def main():
     model.load_state_dict(ckpt["model"])
     model.eval()
 
-    ds = CHUSJVideoDataset(
+    class_names = cfg["data"].get("class_names", ["face", "thorax"])
+    clips_per_video = cfg["data"].get("clips_per_video", cfg["data"].get("clips_per_patient", 16))
+    ds = VideoOBBDataset(
         root=args.data_root, split=args.split, train=False,
+        class_names=class_names,
         num_frames=cfg["data"]["num_frames"], img_size=cfg["data"]["img_size"],
         temporal_stride=cfg["data"]["temporal_stride"],
-        clips_per_patient=cfg["data"]["clips_per_patient"],
+        clips_per_video=clips_per_video,
         use_depth=cfg["data"]["use_depth"],
         transforms=default_eval_transforms(),
     )
@@ -54,7 +59,11 @@ def main():
     pred_angles, gt_angles = [], []
     pred_obbs_pos, gt_obbs_pos = [], []
 
-    num_classes = cfg["head"]["num_classes"]
+    # Per-patient, per-class sequences of (frame_start, obb) for temporal IoU.
+    # Temporal IoU measures how stable detections are across clips of the same patient.
+    per_patient_pred = defaultdict(lambda: defaultdict(list))
+
+    num_classes = len(class_names)
 
     for batch in loader:
         clip = batch["clip"].to(device, non_blocking=True)
@@ -65,15 +74,20 @@ def main():
 
         B = prob.shape[0]
         for b in range(B):
+            pid = batch["video_ids"][b]
+            frame_start = batch["frame_indices"][b][0].item()
             present = prob[b] > args.score_threshold
             keep_b, keep_s, keep_l = [], [], []
             for c in range(num_classes):
                 if not present[c]:
                     continue
                 x, y, w, h = bbox[b, c]
-                keep_b.append(torch.tensor([x, y, w, h, theta[b, c]]))
+                obb = torch.tensor([x, y, w, h, theta[b, c]])
+                keep_b.append(obb)
                 keep_s.append(prob[b, c])
                 keep_l.append(c)
+                # Accumulate for temporal IoU: sort by frame_start later.
+                per_patient_pred[pid][c].append((frame_start, obb))
             preds_all.append({
                 "boxes":  torch.stack(keep_b) if keep_b else torch.zeros(0, 5),
                 "scores": torch.stack(keep_s) if keep_s else torch.zeros(0),
@@ -106,12 +120,22 @@ def main():
     if pred_obbs_pos:
         p_obb = torch.stack(pred_obbs_pos)
         g_obb = torch.stack(gt_obbs_pos)
-        # Pairwise diagonal: each pred matched to its same-index gt.
         from losses.rotated_iou import rotated_iou_shapely
         riou = rotated_iou_shapely(p_obb, g_obb).mean().item()
         ang_acc = angle_accuracy(torch.stack(pred_angles), torch.stack(gt_angles))
     else:
         riou, ang_acc = 0.0, 0.0
+
+    # Temporal IoU: mean consecutive-clip rIoU per patient per class.
+    # Clips are sorted by their starting frame index to reflect temporal order.
+    tiou_vals = []
+    for pid, class_clips in per_patient_pred.items():
+        for c, clip_list in class_clips.items():
+            clip_list.sort(key=lambda item: item[0])          # sort by frame_start
+            obbs = [item[1] for item in clip_list]
+            if len(obbs) >= 2:
+                tiou_vals.append(temporal_iou(obbs))
+    t_iou = float(np.mean(tiou_vals)) if tiou_vals else 0.0
 
     print("=" * 60)
     print(f"Checkpoint: {args.checkpoint}")
@@ -121,6 +145,7 @@ def main():
         print(f"  {k:>14s}: {v:.4f}")
     print(f"  {'rIoU':>14s}: {riou:.4f}")
     print(f"  {'Angle acc':>14s}: {ang_acc:.4f}")
+    print(f"  {'Temporal IoU':>14s}: {t_iou:.4f}")
     print("=" * 60)
 
 

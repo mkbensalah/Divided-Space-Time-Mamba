@@ -16,6 +16,7 @@ Targets format (per clip, padded to num_classes):
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import torch
@@ -93,10 +94,17 @@ class DetectionLoss(nn.Module):
         }
 
     def _compose_obb(self, bbox: torch.Tensor, angle_logits: torch.Tensor) -> torch.Tensor:
-        """Soft-argmax the angle and concatenate to bbox to form (B, C, 5)."""
+        """Circular-mean angle from CSL logits, concatenated with bbox → (B, C, 5).
+
+        Uses the same unit-vector trick as csl_decode so training and inference
+        decode angles identically, including correct wraparound at the 0°/180° boundary.
+        """
         bins = angle_logits.shape[-1]
-        bin_centers = (torch.arange(bins, device=angle_logits.device, dtype=angle_logits.dtype)
-                       + 0.5) * (3.141592653589793 / bins)
-        p = F.softmax(angle_logits, dim=-1)
-        theta = (p * bin_centers).sum(dim=-1)                              # (B, C)
+        centers = (torch.arange(bins, device=angle_logits.device, dtype=angle_logits.dtype)
+                   + 0.5) * (math.pi / bins)
+        p = F.softmax(angle_logits, dim=-1)                                # (B, C, bins)
+        two_t = 2.0 * centers
+        cos_sum = (p * torch.cos(two_t)).sum(dim=-1)                       # (B, C)
+        sin_sum = (p * torch.sin(two_t)).sum(dim=-1)                       # (B, C)
+        theta = 0.5 * torch.atan2(sin_sum, cos_sum) % math.pi             # (B, C) in [0, π)
         return torch.cat([bbox, theta.unsqueeze(-1)], dim=-1)

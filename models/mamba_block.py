@@ -93,7 +93,9 @@ class BiMambaBlock(nn.Module):
         # Output projection (post-merge)
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=bias)
 
-        # Initialize dt projections so dt is bounded in a reasonable range
+        # Initialize dt projections so dt is bounded in a reasonable range.
+        # Mark with _no_reinit_bias so DSTMamba._init_weights skips these biases;
+        # zeroing them would destroy the calibrated inv_softplus(dt) initialization.
         for proj in (self.dt_proj_fwd, self.dt_proj_bwd):
             nn.init.uniform_(proj.weight, -0.001, 0.001)
             with torch.no_grad():
@@ -102,6 +104,7 @@ class BiMambaBlock(nn.Module):
                 ).clamp(min=1e-4)
                 inv_dt = dt + torch.log(-torch.expm1(-dt))
                 proj.bias.copy_(inv_dt)
+            proj._no_reinit_bias = True
 
     # ------------------------------------------------------------------ #
 

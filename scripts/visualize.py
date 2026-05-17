@@ -102,7 +102,7 @@ def main():
 
     panels = []
     for batch in loader:
-        pid = batch["patient_ids"][0]
+        pid = batch["video_ids"][0]
         clip = batch["clip"].to(device)
         out = model(clip)
         prob = torch.sigmoid(out["cls"])[0].cpu()

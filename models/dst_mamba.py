@@ -165,7 +165,9 @@ class DSTMamba(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:
+                # Skip biases flagged by BiMambaBlock: dt_proj bias is initialized
+                # to inv_softplus(dt) to keep SSM timescales in a useful range.
+                if m.bias is not None and not getattr(m, "_no_reinit_bias", False):
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.LayerNorm):
                 nn.init.ones_(m.weight)
@@ -174,37 +176,43 @@ class DSTMamba(nn.Module):
     def forward_features(
         self,
         x: torch.Tensor,
-        token_mask: Optional[torch.Tensor] = None,
+        keep_idx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Args:
             x: (B, C, T, H, W).
-            token_mask: optional (B, T_eff, N) boolean mask. True = keep, False = drop.
-                        Used by MAE pretraining to feed only visible tokens.
+            keep_idx: optional (B, num_keep) int64 tensor of visible spatial indices
+                      in [0, N). When provided, only those spatial positions enter
+                      the encoder (asymmetric MAE). Requires cls_token=False.
         Returns:
-            (B, T_eff, N, D) (or with CLS prepended along N when cls_token=True).
+            (B, T_eff, N_out, D) where N_out = num_keep if keep_idx given, else N.
         """
         tokens = self.patch_embed(x)                                  # (B, T', N, D)
         tokens = tokens + self.pos_embed_spatial + self.pos_embed_temporal
 
         if self.use_cls:
+            assert keep_idx is None, "keep_idx (asymmetric MAE) requires cls_token=False"
             B, T, N, D = tokens.shape
             cls = self.cls_token.expand(B, T, 1, D)
             tokens = torch.cat([cls, tokens], dim=2)                  # (B, T, N+1, D)
 
         tokens = self.pos_drop(tokens)
 
-        if token_mask is not None:
-            # Apply per-(t, n) visibility mask: zero out masked positions.
-            # For MAE, the caller typically reshuffles to keep only visible tokens.
-            tokens = tokens * token_mask.unsqueeze(-1).float()
+        if keep_idx is not None:
+            # Select only the visible spatial positions for the asymmetric encoder.
+            # This is the true VideoMAE-style approach: masked patches never enter
+            # the encoder, so compute cost scales with (1 - mask_ratio).
+            B, T, _, D = tokens.shape
+            K = keep_idx.shape[1]
+            idx = keep_idx.unsqueeze(1).unsqueeze(-1).expand(B, T, K, D)
+            tokens = torch.gather(tokens, 2, idx)                     # (B, T, K, D)
 
         for blk in self.blocks:
             tokens = blk(tokens)
         return self.norm(tokens)
 
-    def forward(self, x: torch.Tensor, token_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        return self.forward_features(x, token_mask=token_mask)
+    def forward(self, x: torch.Tensor, keep_idx: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return self.forward_features(x, keep_idx=keep_idx)
 
 
 def dst_mamba_base(in_chans: int = 3, **kw) -> DSTMamba:

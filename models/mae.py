@@ -24,18 +24,23 @@ from einops import rearrange
 from .dst_mamba import DSTMamba, DSTMambaBlock
 
 
-def tube_mask(B: int, T: int, N: int, mask_ratio: float, device) -> torch.Tensor:
-    """Generate a tube mask: same spatial positions across all T.
+def tube_mask(
+    B: int, T: int, N: int, mask_ratio: float, device
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Generate a tube mask: same spatial positions masked across all T.
 
     Returns:
-        mask: (B, T, N) bool, True = visible, False = masked.
+        mask:     (B, T, N) bool — True = visible, False = masked.
+        keep_idx: (B, num_keep) int64 — sorted spatial indices of visible patches.
     """
     num_keep = int(N * (1 - mask_ratio))
     rand = torch.rand(B, N, device=device)
-    keep_idx = rand.topk(num_keep, dim=1, largest=True).indices  # (B, num_keep)
+    keep_idx = rand.topk(num_keep, dim=1, largest=True).indices   # (B, num_keep)
+    keep_idx, _ = keep_idx.sort(dim=1)                            # deterministic order
     spatial_mask = torch.zeros(B, N, dtype=torch.bool, device=device)
     spatial_mask.scatter_(1, keep_idx, True)
-    return spatial_mask.unsqueeze(1).expand(B, T, N).contiguous()
+    full_mask = spatial_mask.unsqueeze(1).expand(B, T, N).contiguous()
+    return full_mask, keep_idx
 
 
 def normalize_patches(target: torch.Tensor) -> torch.Tensor:
@@ -108,7 +113,7 @@ class DSTMambaMAE(nn.Module):
     def forward(self, x: torch.Tensor, mask_ratio: float = 0.8) -> dict:
         """
         Args:
-            x: (B, C, T, H, W) input clip.
+            x: (B, C, T, H, W) input clip (ImageNet-normalized).
             mask_ratio: fraction of tokens to mask (paper default 0.8).
         Returns:
             dict with 'loss', 'pred', 'mask'.
@@ -117,31 +122,36 @@ class DSTMambaMAE(nn.Module):
         T = self.encoder.T_eff
         N = self.encoder.num_patches
 
-        # 1) Generate tube mask: True = visible.
-        mask = tube_mask(B, T, N, mask_ratio, x.device)            # (B, T, N)
+        # 1) Tube mask: same spatial positions dropped across all T frames.
+        mask, keep_idx = tube_mask(B, T, N, mask_ratio, x.device)   # (B,T,N), (B, num_keep)
+        num_keep = keep_idx.shape[1]
+        dec_dim = self.mask_token.shape[-1]
 
-        # 2) Encode visible tokens (we still pass all positions for simplicity;
-        #    masked positions are zeroed and re-injected as mask tokens in decoder).
-        enc_out = self.encoder.forward_features(x, token_mask=mask)  # (B, T, N, D)
-        dec_in = self.encoder_to_decoder(enc_out)                    # (B, T, N, dec_dim)
+        # 2) Asymmetric encoder: only the ~20% visible tokens are processed.
+        #    Compute cost is O(num_keep * T) instead of O(N * T).
+        enc_vis = self.encoder.forward_features(x, keep_idx=keep_idx)  # (B, T, num_keep, D)
+        vis_dec = self.encoder_to_decoder(enc_vis)                      # (B, T, num_keep, dec_dim)
 
-        # 3) Replace masked positions with the learnable mask token, add decoder pos emb.
-        dec = torch.where(mask.unsqueeze(-1), dec_in, self.mask_token)
+        # 3) Build full decoder input: start with mask tokens at all N positions,
+        #    then scatter the projected visible tokens back to their original locations.
+        dec = self.mask_token.expand(B, T, N, dec_dim).clone()
+        idx = keep_idx.unsqueeze(1).unsqueeze(-1).expand(B, T, num_keep, dec_dim)
+        dec.scatter_(2, idx, vis_dec)
         dec = dec + self.dec_pos_spatial + self.dec_pos_temporal
 
-        # 4) Decode.
+        # 4) Decode full sequence (all N positions).
         for blk in self.decoder_blocks:
             dec = blk(dec)
         dec = self.decoder_norm(dec)
 
-        # 5) Pixel projection and loss on masked positions only.
-        pred = self.decoder_pred(dec)                                # (B, T, N, P*P*ts*C)
-        target = self._patchify_target(x)                            # (B, T, N, ...)
+        # 5) Pixel projection and MSE loss on masked positions only.
+        pred = self.decoder_pred(dec)        # (B, T, N, ts*P*P*C)
+        target = self._patchify_target(x)    # (B, T, N, ts*P*P*C)
         if self.norm_target:
             target = normalize_patches(target)
 
-        loss_per_token = ((pred - target) ** 2).mean(dim=-1)         # (B, T, N)
-        masked = ~mask                                                # 1 where reconstruction is needed
+        masked = ~mask                                                   # True = needs reconstruction
+        loss_per_token = ((pred - target) ** 2).mean(dim=-1)            # (B, T, N)
         loss = (loss_per_token * masked.float()).sum() / (masked.float().sum() + 1e-6)
 
         return {"loss": loss, "pred": pred, "mask": mask}

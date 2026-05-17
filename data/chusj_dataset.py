@@ -224,7 +224,9 @@ class CHUSJVideoDataset(Dataset):
         else:
             # Deterministic uniform sampling for eval.
             start = max_start // 2
-        return [start + i * self.temporal_stride for i in range(self.num_frames)]
+        indices = [start + i * self.temporal_stride for i in range(self.num_frames)]
+        # Clamp to [0, total_frames-1] so short videos don't cause OOB reads.
+        return [min(i, total_frames - 1) for i in indices]
 
     def __getitem__(self, idx: int) -> dict:
         patient_id = self.patients[idx % len(self.patients)]
@@ -261,18 +263,5 @@ class CHUSJVideoDataset(Dataset):
         if self.transforms is not None:
             clip, target = self.transforms(clip, target)
 
-        return {"clip": clip, "target": target, "patient_id": patient_id,
+        return {"clip": clip, "target": target, "video_id": patient_id,
                 "frame_indices": torch.tensor(frame_indices)}
-
-
-def collate_fn(batch: List[dict]) -> dict:
-    clips = torch.stack([b["clip"] for b in batch])
-    target = {
-        "cls":   torch.stack([b["target"]["cls"] for b in batch]),
-        "bbox":  torch.stack([b["target"]["bbox"] for b in batch]),
-        "angle": torch.stack([b["target"]["angle"] for b in batch]),
-    }
-    patient_ids = [b["patient_id"] for b in batch]
-    frame_indices = torch.stack([b["frame_indices"] for b in batch])
-    return {"clip": clips, "target": target,
-            "patient_ids": patient_ids, "frame_indices": frame_indices}

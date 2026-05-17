@@ -22,7 +22,8 @@ data:
   num_frames: 16
   img_size: 224
   temporal_stride: 4
-  clips_per_patient: 16
+  clips_per_video: 16          # clips sampled per video per epoch
+  class_names: ["face", "thorax"]   # ordered list; controls head output size
   use_depth: false
 
 loss:

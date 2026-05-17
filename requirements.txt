@@ -1,5 +1,7 @@
 torch>=2.0.1
 torchvision>=0.15.2
+mamba-ssm==1.1.1
+causal-conv1d==1.1.1
 numpy>=1.24
 opencv-python>=4.8
 pillow>=10.0

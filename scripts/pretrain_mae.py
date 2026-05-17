@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import yaml
@@ -56,6 +57,7 @@ def main():
     writer = SummaryWriter(out / "tb")
 
     torch.manual_seed(cfg["train"]["seed"])
+    np.random.seed(cfg["train"]["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Dataset

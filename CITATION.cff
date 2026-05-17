@@ -1,9 +1,12 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite the following paper."
+message: "If you use this software, please cite the paper below."
 title: "Divided Space-Time Mamba (DST-Mamba)"
+repository-code: "https://github.com/mkbensalah/Divided-Space-Time-Mamba"
+license: MIT
 authors:
   - family-names: "Ben Salah"
     given-names: "Mohamed Khalil"
+    orcid: "https://orcid.org/0009-0008-5719-6784"
     affiliation: "École de Technologie Supérieure, University of Quebec"
   - family-names: "Jouvet"
     given-names: "Philippe"
@@ -27,3 +30,4 @@ preferred-citation:
   start: 1706
   year: 2025
   doi: "10.3390/life15111706"
+  url: "https://www.mdpi.com/2075-1729/15/11/1706"
