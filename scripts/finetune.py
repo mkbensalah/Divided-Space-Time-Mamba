@@ -211,7 +211,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     class_names = cfg["data"].get("class_names", ["face", "thorax"])
-    clips_per_video = cfg["data"].get("clips_per_video", cfg["data"].get("clips_per_patient", 16))
+    clips_per_video = cfg["data"].get("clips_per_video", 16)
 
     # Datasets — VideoOBBDataset works with any annotated video collection.
     train_ds = VideoOBBDataset(

@@ -1,8 +1,7 @@
 """Unlabeled clip dataset for self-supervised pretraining.
 
-Mixes multiple source directories (e.g. CHU-SJ recordings + synthetic clips
-generated from public images) into a single dataset that yields short fixed-
-length clips.
+Mixes multiple source directories (e.g. domain-specific recordings and synthetic
+clips) into a single dataset that yields short fixed-length clips.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .chusj_dataset import _load_video_frames, _load_depth_frames
+from .video_obb_dataset import _load_video_frames, _load_depth_frames
 from .transforms import default_pretrain_transforms
 
 

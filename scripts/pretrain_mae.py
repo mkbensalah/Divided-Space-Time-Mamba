@@ -3,7 +3,7 @@
 Usage:
     python scripts/pretrain_mae.py \
         --config configs/pretrain_mae.yaml \
-        --data_dirs data/chusj/videos data/synthetic_clips \
+        --data_dirs data/videos data/synthetic_clips \
         --output_dir runs/pretrain
 """
 

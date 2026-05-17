@@ -1,6 +1,6 @@
 """General-purpose video dataset for oriented bounding box (OBB) detection.
 
-This is a drop-in replacement for CHUSJVideoDataset that works with any
+Works with any
 annotated video collection — clinical, surveillance, sports, robotics, etc.
 
 Directory layout
@@ -42,8 +42,7 @@ Annotation JSON schema (one file per video)
         ]
     }
 
-If "file" is absent the video is assumed to be at videos/{video_id}.mp4 under root,
-matching the CHU-SJ convention.
+If "file" is absent the video is assumed to be at videos/{video_id}.mp4 under root.
 
 Per-clip target format
 ----------------------
@@ -65,7 +64,66 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .chusj_dataset import _load_video_frames, _load_depth_frames, _aggregate_clip_obb
+try:
+    import decord
+    decord.bridge.set_bridge("torch")
+    _HAS_DECORD = True
+except ImportError:
+    _HAS_DECORD = False
+
+import cv2
+
+
+def _load_video_frames(path: str, indices: List[int], target_size: int) -> torch.Tensor:
+    """Load specified frame indices from a video file, resized to square target_size."""
+    if _HAS_DECORD:
+        import decord as _decord
+        vr = _decord.VideoReader(path)
+        frames = vr.get_batch(indices).permute(0, 3, 1, 2).float() / 255.0
+    else:
+        idx_set = set(indices)
+        cap = cv2.VideoCapture(path)
+        frames_dict: Dict[int, np.ndarray] = {}
+        i = 0
+        while i <= max(indices):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if i in idx_set:
+                frames_dict[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            i += 1
+        cap.release()
+        arr = np.stack([frames_dict[i] for i in indices], axis=0)
+        frames = torch.from_numpy(arr).permute(0, 3, 1, 2).float() / 255.0
+    return torch.nn.functional.interpolate(
+        frames, size=(target_size, target_size), mode="bilinear", align_corners=False
+    )
+
+
+def _load_depth_frames(path: str, indices: List[int], target_size: int) -> torch.Tensor:
+    """Load depth frames (single channel) from a video file."""
+    if _HAS_DECORD:
+        import decord as _decord
+        vr = _decord.VideoReader(path)
+        frames = vr.get_batch(indices).float()[..., :1].permute(0, 3, 1, 2) / 255.0
+    else:
+        idx_set = set(indices)
+        cap = cv2.VideoCapture(path)
+        frames_dict: Dict[int, np.ndarray] = {}
+        i = 0
+        while i <= max(indices):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if i in idx_set:
+                frames_dict[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            i += 1
+        cap.release()
+        arr = np.stack([frames_dict[i] for i in indices], axis=0)[..., None]
+        frames = torch.from_numpy(arr).permute(0, 3, 1, 2).float() / 255.0
+    return torch.nn.functional.interpolate(
+        frames, size=(target_size, target_size), mode="bilinear", align_corners=False
+    )
 
 
 class VideoOBBDataset(Dataset):
@@ -163,8 +221,7 @@ class VideoOBBDataset(Dataset):
     def _build_target(self, ann: dict, frame_indices: List[int]) -> dict:
         """Aggregate per-frame annotations into one per-clip OBB target.
 
-        Uses the same circular-median strategy as CHUSJVideoDataset: median (x,y,w,h)
-        and circular mean angle across the selected frames.
+        Uses median (x,y,w,h) and circular mean angle across the selected frames.
         """
         img_h, img_w = ann["height"], ann["width"]
         num_classes = self.num_classes

@@ -42,7 +42,7 @@ def main():
     model.eval()
 
     class_names = cfg["data"].get("class_names", ["face", "thorax"])
-    clips_per_video = cfg["data"].get("clips_per_video", cfg["data"].get("clips_per_patient", 16))
+    clips_per_video = cfg["data"].get("clips_per_video", 16)
     ds = VideoOBBDataset(
         root=args.data_root, split=args.split, train=False,
         class_names=class_names,
