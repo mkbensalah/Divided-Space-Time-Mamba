@@ -201,6 +201,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-This work was supported by NSERC (Canada) and FRQS. Clinical data collection at CHU Sainte-Justine was approved under ethics protocol 2016-1242. We thank the PICU staff and families who consented to data collection.
-
 Implementation builds on prior open-source work: [Mamba](https://github.com/state-spaces/mamba), [VideoMAE](https://github.com/MCG-NJU/VideoMAE), [VideoMamba](https://github.com/OpenGVLab/VideoMamba), [Unmasked Teacher](https://github.com/OpenGVLab/unmasked_teacher), and [TimeSformer](https://github.com/facebookresearch/TimeSformer).
