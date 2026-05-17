@@ -13,8 +13,6 @@
 
 DST-Mamba is a State Space Model–based detector for face and thoracoabdominal regions in pediatric intensive care unit (PICU) video. It factorizes spatiotemporal modeling into a spatial Bi-Mamba stage followed by a temporal Bi-Mamba stage, predicts oriented bounding boxes (OBBs), and is pretrained with masked autoencoders on domain-specific clips. The model achieves 0.96 mAP@0.5 / 0.62 mAP50-95 / 0.95 rotated IoU at 23 FPS (43 ms latency) on 16×640² clips.
 
-![DST-Mamba overview](docs/architecture.png)
-
 ## Key features
 
 - **Divided Space–Time Mamba backbone.** Sequential spatial-then-temporal Bi-directional Mamba blocks with linear-time complexity O(L), avoiding the quadratic cost of joint self-attention.
