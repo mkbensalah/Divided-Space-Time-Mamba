@@ -38,7 +38,7 @@ Divided-Space-Time-Mamba/
 │   ├── detection_loss.py     Combined detection loss
 │   └── rotated_iou.py        Differentiable rotated IoU
 ├── data/
-│   ├── chusj_dataset.py      CHU-SJ PICU video dataset
+│   ├── video_obb_dataset.py  General video OBB dataset (any annotated collection)
 │   ├── synthetic_video.py    Image-to-video clip generation
 │   └── transforms.py         Spatiotemporal augmentations
 ├── utils/
@@ -81,24 +81,28 @@ pip install -r requirements.txt
 
 ## Data preparation
 
-### CHU Sainte-Justine PICU dataset
-The clinical dataset is from the MEDEVAC database (CHU Sainte-Justine, ethics protocol 2016-1242). It is not publicly redistributable; access requires Research Ethics Board approval. Contact the corresponding author.
+### Dataset layout
 
-Expected layout once obtained:
+`VideoOBBDataset` works with any annotated video collection. Organize your data as:
+
 ```
-data/chusj/
+data/my_dataset/
 ├── videos/
-│   ├── A0001.mp4
-│   ├── A0001_depth.mp4     # optional, for RGB-D
+│   ├── video_001.mp4
+│   ├── video_001_depth.mp4   # optional, for RGB-D
 │   └── ...
 ├── annotations/
-│   ├── A0001.json          # OBB per frame: [xc, yc, w, h, theta, class]
-│   └── ...
+│   └── video_001.json        # OBB per frame: see data/example_annotation.json
 └── splits/
-    ├── train_patients.txt
-    ├── val_patients.txt
-    └── test_patients.txt
+    ├── train.txt             # one video_id per line
+    ├── val.txt
+    └── test.txt
 ```
+
+See `data/example_annotation.json` for the full annotation schema.
+
+### CHU Sainte-Justine PICU dataset
+The clinical dataset used in the paper is from the MEDEVAC database (CHU Sainte-Justine, ethics protocol 2016-1242). It is not publicly redistributable; access requires Research Ethics Board approval. Contact the corresponding author.
 
 ### Synthetic pretraining clips
 Generate video clips from publicly available pediatric/NICU images:
@@ -116,7 +120,7 @@ python -m data.synthetic_video \
 ```bash
 python scripts/pretrain_mae.py \
     --config configs/pretrain_mae.yaml \
-    --data_dirs data/chusj/videos data/synthetic_clips \
+    --data_dirs data/my_dataset/videos data/synthetic_clips \
     --output_dir runs/pretrain
 ```
 
@@ -127,7 +131,7 @@ Defaults follow the paper: 2500 epochs, AdamW (lr=1.5e-4, wd=0.05, warmup=40), 8
 python scripts/finetune.py \
     --config configs/finetune_detection.yaml \
     --pretrained runs/pretrain/checkpoint-last.pth \
-    --data_root data/chusj \
+    --data_root data/my_dataset \
     --output_dir runs/finetune
 ```
 
@@ -137,7 +141,7 @@ Defaults: 100 epochs, RAdam (lr=1e-3), batch size 32, 16-frame clips at 224² or
 ```bash
 python scripts/evaluate.py \
     --checkpoint runs/finetune/best.pth \
-    --data_root data/chusj \
+    --data_root data/my_dataset \
     --split test
 ```
 
@@ -147,11 +151,12 @@ Reports rIoU, mAP@{0.5, 0.6, 0.75}, mAP50-95, angle accuracy, temporal IoU.
 ```bash
 python scripts/visualize.py \
     --checkpoint runs/finetune/best.pth \
-    --patients A0009 A0063 A0099 A0152 \
+    --data_root data/my_dataset \
+    --videos video_001 video_002 video_003 \
     --output_dir figures/qualitative
 ```
 
-Renders ground-truth (solid; green=face, blue=thorax) and predictions (dashed; cyan=face, yellow=thorax) overlays.
+Renders ground-truth (solid) and predicted (dashed) oriented bounding boxes on sampled frames, and saves a combined PDF.
 
 ## Reproducing paper results
 
